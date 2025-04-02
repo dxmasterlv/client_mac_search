@@ -5,11 +5,33 @@ import csv
 import sys
 
 # WLC connection details (replace with your own)
-WLC_HOST = "192.168.1.100"  # WLC IP address
+WLC_HOST = "10.254.0.100"  # WLC IP address
 WLC_USERNAME = "admin"      # WLC username
-WLC_PASSWORD = "password"   # WLC password
+WLC_PASSWORD = input("Enter admin password: ")   # WLC password
 OUTPUT_CSV = "wlc_clients.csv"  # Output CSV file name
-AP_PREFIX = "BB4E_FL4"      # Default AP name prefix (changeable)
+AP_PREFIX = "HMC_FL4"      # Default AP name prefix (changeable)
+OUI_FILE = "oui.txt"        # Path to the OUI file
+
+def load_oui_database(oui_file):
+    """Load OUI database into a dictionary."""
+    oui_dict = {}
+    try:
+        with open(oui_file, "r") as f:
+            for line in f:
+                if "(hex)" in line:
+                    parts = line.split("(hex)")
+                    oui = parts[0].strip().replace("-", ":")  # Convert to colon format
+                    vendor = parts[1].strip()
+                    oui_dict[oui] = vendor
+    except FileNotFoundError:
+        print(f"Error: {oui_file} not found. Please download it from http://standards-oui.ieee.org/oui/oui.txt")
+        sys.exit(1)
+    return oui_dict
+
+def get_vendor(mac_address, oui_dict):
+    """Look up the vendor for a given MAC address."""
+    oui = ":".join(mac_address.split(":")[:3]).upper()  # First 6 chars (OUI)
+    return oui_dict.get(oui, "Unknown")
 
 def ssh_connect(host, username, password):
     """Establish SSH connection to the WLC."""
@@ -47,7 +69,6 @@ def get_clients_for_ap(ssh, ap_name):
     output = run_command(ssh, command, wait_time=3)
     mac_addresses = []
     for line in output.splitlines():
-        # Match MAC address format (e.g., 00:11:22:33:44:55)
         match = re.search(r"([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})", line)
         if match:
             mac_addresses.append((match.group(0), ap_name))  # Tuple of (MAC, AP Name)
@@ -67,14 +88,19 @@ def get_client_details(ssh, mac_address):
     return ip_address
 
 def save_to_csv(data):
-    """Save MAC, IP, and AP Name to a CSV file."""
+    """Save MAC, IP, AP Name, and Vendor to a CSV file."""
     with open(OUTPUT_CSV, mode="w", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["MAC Address", "IP Address", "AP Name"])  # Header
+        writer.writerow(["MAC Address", "IP Address", "AP Name", "Vendor"])  # Updated header
         writer.writerows(data)
 
 def main(ap_prefix=AP_PREFIX):
     try:
+        # Load OUI database
+        print("Loading OUI database...")
+        oui_dict = load_oui_database(OUI_FILE)
+        print(f"Loaded {len(oui_dict)} OUI entries.")
+
         # Connect to WLC
         print("Connecting to WLC...")
         ssh = ssh_connect(WLC_HOST, WLC_USERNAME, WLC_PASSWORD)
@@ -102,7 +128,8 @@ def main(ap_prefix=AP_PREFIX):
             for mac, ap in mac_ap_pairs:
                 print(f"Getting details for MAC: {mac} on AP: {ap}")
                 ip = get_client_details(ssh, mac)
-                client_data.append([mac, ip, ap])  # Include AP name in data
+                vendor = get_vendor(mac, oui_dict)
+                client_data.append([mac, ip, ap, vendor])  # Include vendor in data
 
         # Save to CSV
         if client_data:
@@ -123,5 +150,3 @@ if __name__ == "__main__":
         main(sys.argv[1])  # Use command-line argument as AP prefix
     else:
         main()  # Use default AP_PREFIX
-
-
