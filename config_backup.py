@@ -20,6 +20,25 @@ def read_ip_list(file_path):
         logging.error(f"Failed to read IP list from {file_path}: {str(e)}")
         return []
 
+def write_failed_connection(ip, failed_file):
+    """Append IP to failed connections file."""
+    try:
+        with open(failed_file, 'a') as f:
+            f.write(f"{ip}\n")
+        logging.info(f"Logged failed connection for {ip} to {failed_file}")
+    except Exception as e:
+        logging.error(f"Failed to write to {failed_file} for {ip}: {str(e)}")
+
+def update_ip_list(file_path, successful_ips):
+    """Rewrite IP list file to include only successful IPs."""
+    try:
+        with open(file_path, 'w') as f:
+            for ip in successful_ips:
+                f.write(f"{ip}\n")
+        logging.info(f"Updated {file_path} with successful IPs")
+    except Exception as e:
+        logging.error(f"Failed to update {file_path}: {str(e)}")
+
 def validate_ip(ip):
     """Validate IP address format."""
     try:
@@ -29,7 +48,7 @@ def validate_ip(ip):
         logging.error(f"Invalid IP address: {ip}")
         return False
 
-def get_device_type(ip, username, password):
+def get_device_type(ip, username, password, failed_file):
     """Attempt to determine device type by connecting and checking platform."""
     device = {
         'device_type': 'autodetect',
@@ -62,9 +81,10 @@ def get_device_type(ip, username, password):
                         return 'cisco_ios'
     except Exception as e:
         logging.error(f"Failed to detect device type for {ip}: {str(e)}")
+        write_failed_connection(ip, failed_file)
         return None
 
-def get_config(ip, username, password, device_type):
+def get_config(ip, username, password, device_type, failed_file):
     """Connect to device and retrieve configuration."""
     device = {
         'device_type': device_type,
@@ -90,6 +110,7 @@ def get_config(ip, username, password, device_type):
             return config
     except Exception as e:
         logging.error(f"Failed to retrieve config from {ip}: {str(e)}")
+        write_failed_connection(ip, failed_file)
         return None
 
 def save_config(ip, config, output_dir):
@@ -112,6 +133,7 @@ def save_config(ip, config, output_dir):
 def main():
     # Configuration
     ip_file = 'ip_list.txt'  # File containing IP addresses
+    failed_file = 'failed_connections.txt'  # File for failed connections
     username = 'admin'  # Replace with your username
     password = 'password'  # Replace with your password
     output_dir = 'configs'  # Directory to store configs
@@ -122,23 +144,29 @@ def main():
         logging.error("No valid IP addresses found in the file. Exiting.")
         return
     
+    successful_ips = []
+    
     for ip in ip_list:
         if not validate_ip(ip):
+            write_failed_connection(ip, failed_file)
             continue
             
         logging.info(f"Processing device: {ip}")
         
         # Detect device type
-        device_type = get_device_type(ip, username, password)
+        device_type = get_device_type(ip, username, password, failed_file)
         if not device_type:
-            logging.error(f"Could not determine device type for {ip}")
             continue
             
         # Get configuration
-        config = get_config(ip, username, password, device_type)
+        config = get_config(ip, username, password, device_type, failed_file)
         if config:
             # Save configuration
-            save_config(ip, config, output_dir)
+            if save_config(ip, config, output_dir):
+                successful_ips.append(ip)
+    
+    # Update original IP list with successful IPs only
+    update_ip_list(ip_file, successful_ips)
 
 if __name__ == '__main__':
     main()
